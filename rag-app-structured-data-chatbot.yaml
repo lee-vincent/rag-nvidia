@@ -1,0 +1,40 @@
+services:
+  chain-server:
+    container_name: rag-app-structured-data-chatbot
+    image: nvcr.io/ohlfw0olaadg/ea-participants/rag-application-structured-data-chatbot:24.06
+    command: --port 8081 --host 0.0.0.0
+    environment:
+      APP_LLM_MODELNAME: ${APP_LLM_MODELNAME:-"meta/llama3-70b-instruct"}
+      APP_LLM_MODELENGINE: nvidia-ai-endpoints
+      APP_LLM_SERVERURL: ${APP_LLM_SERVERURL:-"nemollm-inference:8000"}
+      APP_LLM_MODELNAMEPANDASAI: ${APP_LLM_MODELNAMEPANDASAI:-"meta/llama3-70b-instruct"}
+      APP_PROMPTS_CHATTEMPLATE: "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Please ensure that your responses are positive in nature."
+      APP_PROMPTS_RAGTEMPLATE: "You are a helpful AI assistant named Envie. You will reply to questions only based on the context that you are provided. If something is out of context, you will refrain from replying and politely decline to respond to the user."
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+      COLLECTION_NAME: structured_data_rag
+      CSV_NAME: PdM_machines
+      APP_VECTORSTORE_URL: "http://milvus:19530"
+      APP_VECTORSTORE_NAME: "milvus"
+      LOGLEVEL: ${LOGLEVEL:-INFO}
+    ports:
+    - "8081:8081"
+    expose:
+    - "8081"
+    shm_size: 5gb
+
+  rag-playground:
+    container_name: rag-playground
+    image: nvcr.io/ohlfw0olaadg/ea-participants/rag-playground:24.06
+    environment:
+      CHAIN_SERVER: "http://chain-server"
+      CHAIN_SERVER_PORT: "8081"
+    ports:
+    - "3001:3001"
+    expose:
+    - "3001"
+    depends_on:
+    - chain-server
+
+networks:
+  default:
+    name: nvidia-rag

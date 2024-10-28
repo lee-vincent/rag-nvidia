@@ -1,0 +1,51 @@
+services:
+  chain-server:
+    container_name: rag-application-multimodal-chatbot
+    image: nvcr.io/ohlfw0olaadg/ea-participants/rag-application-multimodal-chatbot:24.06
+    command: --port 8081 --host 0.0.0.0
+    environment:
+      APP_LLM_MODELNAME: ${APP_LLM_MODELNAME:-"meta/llama3-8b-instruct"}
+      APP_LLM_MODELENGINE: nvidia-ai-endpoints
+      APP_LLM_SERVERURL: ${APP_LLM_SERVERURL:-"nemollm-inference:8000"}
+      APP_EMBEDDINGS_SERVERURL: ${APP_EMBEDDINGS_SERVERURL:-"nemollm-embedding:9080"}
+      APP_EMBEDDINGS_MODELNAME: ${APP_EMBEDDINGS_MODELNAME:-"NV-Embed-QA"}
+      APP_EMBEDDINGS_MODELENGINE: nvidia-ai-endpoints
+      APP_TEXTSPLITTER_CHUNKSIZE: 506
+      APP_TEXTSPLITTER_CHUNKOVERLAP: 200
+      APP_PROMPTS_CHATTEMPLATE: "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Please ensure that your responses are positive in nature."
+      APP_PROMPTS_RAGTEMPLATE: "You are a helpful AI assistant named Envie. You will reply to questions only based on the context that you are provided. If something is out of context, you will refrain from replying and politely decline to respond to the user."
+      APP_RETRIEVER_TOPK: 4
+      APP_RETRIEVER_SCORETHRESHOLD: 0.25
+      COLLECTION_NAME: multimodal_rag
+      APP_VECTORSTORE_URL: "http://milvus:19530"
+      APP_VECTORSTORE_NAME: "milvus"
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-""}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      ENABLE_TRACING: false
+      LOGLEVEL: ${LOGLEVEL:-INFO}
+    ports:
+    - "8081:8081"
+    expose:
+    - "8081"
+    shm_size: 5gb
+
+  rag-playground:
+    container_name: rag-playground
+    image: nvcr.io/ohlfw0olaadg/ea-participants/rag-playground:24.06
+    environment:
+      CHAIN_SERVER: "http://chain-server"
+      CHAIN_SERVER_PORT: "8081"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      ENABLE_TRACING: false
+    ports:
+    - "3001:3001"
+    expose:
+    - "3001"
+    depends_on:
+    - chain-server
+
+networks:
+  default:
+    name: nvidia-rag

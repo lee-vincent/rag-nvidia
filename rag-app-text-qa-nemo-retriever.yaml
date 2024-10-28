@@ -1,0 +1,133 @@
+services:
+  ###
+  # Retrieval microservice on NGC
+  ###
+
+  retrieval-ms:
+    image: "nvcr.io/ohlfw0olaadg/ea-participants/nemo-retriever-microservice:24.04"
+
+    environment:
+      - DATABASE_URL=postgresql://postgres:pgadmin@postgres:5432/postgres
+
+      # PDF extraction service
+      - TIKA_URL=http://tika:9998/tika
+
+      # OpenTelemetry environmental variables
+      - OTEL_SERVICE_NAME=nemo-retrieval-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none
+      - OTEL_PYTHON_EXCLUDED_URLS="health"
+
+      # Multistage hybrid pipeline running in CPU mode
+      - HYBRID_MILVUS_URI=http://milvus:19530/default
+      - HYBRID_EMBEDDER_URI=http://nemollm-embedding:9080/v1/embeddings
+      - HYBRID_EMBEDDER_MAX_BATCH_SIZE=8192
+      - HYBRID_EMBEDDING_DIMENSION=1024
+      - HYBRID_EMBEDDER_MODEL_NAME=${APP_EMBEDDINGS_MODELNAME:-NV-Embed-QA}
+      # Yes this is a 20 _second_ timeout. The embedder running
+      # on CPU can be very slow.
+      - HYBRID_EMBEDDER_TIMEOUT=20
+      - HYBRID_ELASTICSEARCH_URI=http://elasticsearch:9200
+      - HYBRID_SPARSE_TOP_K=100
+      - HYBRID_DENSE_TOP_K=100
+
+      # multistage hybrid pipeline running in GPU mode
+      - RANKED_HYBRID_MILVUS_URI=http://milvus:19530/default
+      - RANKED_HYBRID_EMBEDDING_DIMENSION=1024
+      - RANKED_HYBRID_EMBEDDER_URI=http://nemollm-embedding:9080/v1/embeddings
+      - RANKED_HYBRID_EMBEDDER_MODEL_NAME=${APP_EMBEDDINGS_MODELNAME:-NV-Embed-QA}
+      - RANKED_HYBRID_EMBEDDER_MAX_BATCH_SIZE=8192
+      - RANKED_HYBRID_EMBEDDER_TIMEOUT=20
+      - RANKED_HYBRID_ELASTICSEARCH_URI=http://elasticsearch:9200
+      - RANKED_HYBRID_RANKER_MODEL_NAME=${RANKING_MODEL_NAME:-NV-Rerank-QA-Mistral-4B}
+      - RANKED_HYBRID_RANKER_URI=http://ranking-ms:8080/v1/ranking
+      - RANKED_HYBRID_RANKER_TOP_K=40
+      - RANKED_HYBRID_RANKER_TIMEOUT=5
+      - RANKED_HYBRID_DENSE_TOP_K=100
+      - RANKED_HYBRID_SPARSE_TOP_K=100
+
+      # This is required until github.com/open-telemetry/opentelemetry-python-contrib/pull/1990
+      # is merged
+      - OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=elasticsearch
+
+      - ENABLE_DATASOURCES_RETRIEVER=false
+
+    # Expose port 8000 on the container to port 1984 on the host.
+    ports:
+      - "1984:8000"
+
+    # Run the microservice on port 8000, must align with `ports` above.
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "opentelemetry-instrument \
+        uvicorn retrieval.main:app --host 0.0.0.0 --port 8000"
+
+    healthcheck:
+      test: [
+          "CMD",
+          "python",
+          "-c",
+          "import requests;
+          requests.get('http://localhost:8000/health').raise_for_status()",
+        ]
+      interval: 10s
+      timeout: 20s
+      retries: 20
+
+    # Set the working directory to /app. This is pedantic to avoid relying on the Dockerfile setting WORKDIR=/app.
+    working_dir: /app
+
+  ###
+  # PDF extraction service
+  ###
+  tika:
+    image: apache/tika:2.9.1.0
+
+  chain-server:
+    container_name: rag-application-text-qa-nemo-retriever
+    image: nvcr.io/ohlfw0olaadg/ea-participants/rag-application-text-qa-nemo-retriever:24.06
+    command: --port 8081 --host 0.0.0.0
+    environment:
+      APP_LLM_SERVERURL: "nemollm-inference:8000"
+      APP_LLM_MODELNAME: ${APP_LLM_MODELNAME:-"meta/llama3-8b-instruct"}
+      APP_LLM_MODELENGINE: nvidia-ai-endpoints
+      NVIDIA_API_KEY: ""
+      COLLECTION_NAME: text_qa_nemo_retriever_rag
+      APP_RETRIEVER_NRURL: http://retrieval-ms:8000
+      APP_RETRIEVER_NRPIPELINE: ${NEMO_RETRIEVER_PIPELINE:-ranked_hybrid}
+      APP_RETRIEVER_TOPK: 4
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      ENABLE_TRACING: false
+      LOGLEVEL: ${LOGLEVEL:-INFO}
+    ports:
+    - "8081:8081"
+    expose:
+    - "8081"
+    shm_size: 5gb
+    depends_on:
+      retrieval-ms:
+        condition: service_healthy
+
+  rag-playground:
+    container_name: rag-playground
+    image: nvcr.io/ohlfw0olaadg/ea-participants/rag-playground:24.06
+    environment:
+      CHAIN_SERVER: "http://chain-server"
+      CHAIN_SERVER_PORT: "8081"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      ENABLE_TRACING: false
+    ports:
+    - "3001:3001"
+    expose:
+    - "3001"
+    depends_on:
+    - chain-server
+
+networks:
+  default:
+    name: nvidia-rag

@@ -1,0 +1,8 @@
+model-cache/
+Downloads/
+volumes/
+.cache/
+.local/
+.mozilla/
+.ssh/
+.vnc/
